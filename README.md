@@ -12,6 +12,8 @@ operación de compra puede repetirse, perder la respuesta del cobro o ser rechaz
 Cada servicio tiene su propia base de datos y no conoce la del otro. La comunicación
 entre ellos es HTTP.
 
+- **Video de demostración:** [Ver demostración en Google Drive](https://drive.google.com/file/d/1-MmO6eu-N4uibUNpRzOky-9asykN14Ko/view?usp=drive_link)
+
 ---
 
 ## 1. Arquitectura
@@ -180,16 +182,28 @@ suelta** y el resultado es el mismo.
 | 4 | Pago rechazado | `payment_mode: "reject"` | `REJECTED`; reserva `RELEASED` una sola vez; stock vuelve a 5 |
 | 5 | Otra intención de compra | Segunda clave con la última unidad | Primera `201`/`PAID`; segunda `409 insufficient_stock`; stock `0`, nunca negativo |
 
-### Cómo correrla
+### Cómo replicar las pruebas en Postman Desktop
 
-Con los dos servicios levantados:
-
-```powershell
-# Postman: importar la colección y el environment, y usar "Run collection"
-# o por consola, si hay newman instalado:
-newman run postman/reto-pedidos-pagos.postman_collection.json `
-           -e postman/local.postman_environment.json
-```
+1. **Levantar los servicios:**
+   Asegurarse de tener ambos servicios ejecutándose en limpio:
+   ```powershell
+   .\run.ps1 -Reset
+   ```
+2. **Importar los archivos en Postman:**
+   * Abrir Postman Desktop y presionar **Import** (o `Ctrl + O`).
+   * Seleccionar los dos archivos ubicados en la carpeta `postman/`:
+     * Colección: `postman/reto-pedidos-pagos.postman_collection.json`
+     * Entorno: `postman/local.postman_environment.json`
+3. **Seleccionar el entorno:**
+   * En el selector desplegable de entornos (arriba a la derecha), elegir: **Local (5000 / 5001)**.
+4. **Ejecutar las pruebas:**
+   * **Opción A (Manual / Por caso):** Abrir cualquiera de las 5 carpetas y enviar las peticiones secuencialmente. Cada carpeta cuenta con llamadas de preparación (`/admin/reset` y `/admin/inventory`) que garantizan aislamiento total e independencia.
+   * **Opción B (Automática / Runner):** Hacer clic derecho sobre la colección `reto-pedidos-pagos` ➔ **Run collection** ➔ **Run reto-pedidos-pagos** (ejecuta las 32 peticiones y 56 aserciones automáticamente).
+   * **Opción C (CLI con Newman):**
+     ```powershell
+     newman run postman/reto-pedidos-pagos.postman_collection.json `
+                -e postman/local.postman_environment.json
+     ```
 
 El environment (`postman/local.postman_environment.json`) solo define las bases URL
 y el SKU de demo.
@@ -290,7 +304,6 @@ tests/            Suite pytest (contratos de esquema y los cinco casos)
 postman/          Colección, environment y consultas de evidencia
 doc/              Documentación por fases (índice en doc/README.md)
 run.ps1           Arranca los dos servicios
-AGENTS.md         Stack, convenciones y puertas de calidad
 ```
 
 La documentación por fases está en [`doc/README.md`](doc/README.md): cada fase tiene

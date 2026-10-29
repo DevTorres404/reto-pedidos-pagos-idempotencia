@@ -17,6 +17,8 @@ venv/
 .agents/
 .atl/
 .codegraph/
+AGENTS.md
+reto_tecnico_pedidos_pagos_idempotencia.md
 
 # Editors / OS
 .vscode/
