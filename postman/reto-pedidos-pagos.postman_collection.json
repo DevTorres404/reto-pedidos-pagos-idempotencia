@@ -1,0 +1,682 @@
+{
+  "info": {
+    "name": "Reto tecnico - Pedidos, pagos e idempotencia",
+    "description": "Cinco casos obligatorios del reto. Cada carpeta reinicia ambos servicios (POST /admin/reset) y siembra el inventario antes de empezar, asi que se puede ejecutar una carpeta suelta o la coleccion completa y el resultado es el mismo.\n\nAntes de correr: .\\run.ps1 y verificar http://127.0.0.1:5000/health y http://127.0.0.1:5001/health.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "order_api", "value": "http://127.0.0.1:5000" },
+    { "key": "payment_api", "value": "http://127.0.0.1:5001" },
+    { "key": "sku", "value": "SKU-1" },
+    { "key": "order_id", "value": "" },
+    { "key": "payment_key", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Flujo exitoso",
+      "description": "Un pedido, una reserva, un cobro y estado final PAID.",
+      "item": [
+        {
+          "name": "1.0 Reset Order API",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reset ok', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{order_api}}/admin/reset"
+          }
+        },
+        {
+          "name": "1.1 Reset Payment Mock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reset ok', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{payment_api}}/admin/reset"
+          }
+        },
+        {
+          "name": "1.2 Sembrar inventario (5 unidades)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('inventario sembrado', function () { pm.response.to.have.status(200); });",
+                  "pm.test('5 disponibles', function () { pm.expect(pm.response.json().available).to.eql(5); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Mechanical keyboard\",\n  \"available\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/admin/inventory"
+          }
+        },
+        {
+          "name": "1.3 Crear pedido aprobado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 creado', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('pedido PAID', function () { pm.expect(body.status).to.eql('PAID'); });",
+                  "pm.test('reserva CONFIRMED', function () { pm.expect(body.reservation.status).to.eql('CONFIRMED'); });",
+                  "pm.test('total correcto', function () { pm.expect(body.total_cents).to.eql(9900); });",
+                  "pm.collectionVariables.set('order_id', body.order_id);",
+                  "pm.collectionVariables.set('payment_key', body.payment_key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "case1-key" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"cust-1\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 1,\n  \"unit_price_cents\": 9900,\n  \"payment_mode\": \"approve\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/orders"
+          }
+        },
+        {
+          "name": "1.4 Consultar pedido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('sigue PAID', function () { pm.expect(pm.response.json().status).to.eql('PAID'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{order_api}}/orders/{{order_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Repeticion de la misma solicitud",
+      "description": "La misma clave devuelve el resultado conocido: no se duplica pedido, reserva ni cobro.",
+      "item": [
+        {
+          "name": "2.0 Reset Order API",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{order_api}}/admin/reset" }
+        },
+        {
+          "name": "2.1 Reset Payment Mock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{payment_api}}/admin/reset" }
+        },
+        {
+          "name": "2.2 Sembrar inventario (5 unidades)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('sembrado', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Mechanical keyboard\",\n  \"available\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/admin/inventory"
+          }
+        },
+        {
+          "name": "2.3 Primer envio (crea)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 creado', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('order_id', pm.response.json().order_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "case2-key" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"cust-1\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 1,\n  \"unit_price_cents\": 9900\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/orders"
+          }
+        },
+        {
+          "name": "2.4 Reenvio con la misma clave",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 replay', function () { pm.response.to.have.status(200); });",
+                  "pm.test('header de replay', function () { pm.expect(pm.response.headers.get('X-Idempotent-Replay')).to.eql('true'); });",
+                  "pm.test('mismo pedido', function () { pm.expect(body.order_id).to.eql(pm.collectionVariables.get('order_id')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "case2-key" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"cust-1\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 1,\n  \"unit_price_cents\": 9900\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/orders"
+          }
+        },
+        {
+          "name": "2.5 Verificar que el stock no se movio dos veces",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const item = pm.response.json().items[0];",
+                  "pm.test('4 disponibles', function () { pm.expect(item.available).to.eql(4); });",
+                  "pm.test('0 reservadas', function () { pm.expect(item.reserved).to.eql(0); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{order_api}}/inventory" }
+        }
+      ]
+    },
+    {
+      "name": "3. Respuesta perdida despues del cobro",
+      "description": "El mock registra el cobro y despues simula el timeout. El backend resuelve consultando el pago y no vuelve a cobrar.",
+      "item": [
+        {
+          "name": "3.0 Reset Order API",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{order_api}}/admin/reset" }
+        },
+        {
+          "name": "3.1 Reset Payment Mock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{payment_api}}/admin/reset" }
+        },
+        {
+          "name": "3.2 Sembrar inventario (5 unidades)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('sembrado', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Mechanical keyboard\",\n  \"available\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/admin/inventory"
+          }
+        },
+        {
+          "name": "3.3 Crear pedido con timeout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('202 incierto', function () { pm.response.to.have.status(202); });",
+                  "pm.test('estado PAYMENT_UNCERTAIN', function () { pm.expect(body.status).to.eql('PAYMENT_UNCERTAIN'); });",
+                  "pm.collectionVariables.set('order_id', body.order_id);",
+                  "pm.collectionVariables.set('payment_key', body.payment_key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "case3-key" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"cust-1\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 1,\n  \"unit_price_cents\": 9900,\n  \"payment_mode\": \"timeout\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/orders"
+          }
+        },
+        {
+          "name": "3.4 El cobro si existe: consultar el pago en el mock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 el mock lo tiene', function () { pm.response.to.have.status(200); });",
+                  "pm.test('cobro registrado con respuesta perdida', function () { pm.expect(body.status).to.eql('CHARGED_TIMEOUT'); });",
+                  "pm.test('charged true', function () { pm.expect(body.charged).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{payment_api}}/payments/{{payment_key}}" }
+        },
+        {
+          "name": "3.5 Reconciliar el pedido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 resuelto', function () { pm.response.to.have.status(200); });",
+                  "pm.test('pedido PAID', function () { pm.expect(body.status).to.eql('PAID'); });",
+                  "pm.test('reserva CONFIRMED', function () { pm.expect(body.reservation.status).to.eql('CONFIRMED'); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{order_api}}/orders/{{order_id}}/reconcile" }
+        },
+        {
+          "name": "3.6 Reconciliar de nuevo (no vuelve a cobrar)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('sigue PAID', function () { pm.expect(pm.response.json().status).to.eql('PAID'); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{order_api}}/orders/{{order_id}}/reconcile" }
+        },
+        {
+          "name": "3.7 El pago sigue siendo uno solo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('mismo pago', function () { pm.expect(pm.response.json().idempotency_key).to.eql(pm.collectionVariables.get('payment_key')); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{payment_api}}/payments/{{payment_key}}" }
+        }
+      ]
+    },
+    {
+      "name": "4. Pago rechazado",
+      "description": "El pedido queda REJECTED y la reserva se libera una sola vez.",
+      "item": [
+        {
+          "name": "4.0 Reset Order API",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{order_api}}/admin/reset" }
+        },
+        {
+          "name": "4.1 Reset Payment Mock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{payment_api}}/admin/reset" }
+        },
+        {
+          "name": "4.2 Sembrar inventario (5 unidades)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('sembrado', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Mechanical keyboard\",\n  \"available\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/admin/inventory"
+          }
+        },
+        {
+          "name": "4.3 Crear pedido con pago rechazado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('pedido REJECTED', function () { pm.expect(body.status).to.eql('REJECTED'); });",
+                  "pm.test('reserva RELEASED', function () { pm.expect(body.reservation.status).to.eql('RELEASED'); });",
+                  "pm.collectionVariables.set('order_id', body.order_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "case4-key" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"cust-1\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 1,\n  \"unit_price_cents\": 9900,\n  \"payment_mode\": \"reject\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/orders"
+          }
+        },
+        {
+          "name": "4.4 El stock volvio a estar disponible",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const item = pm.response.json().items[0];",
+                  "pm.test('5 disponibles', function () { pm.expect(item.available).to.eql(5); });",
+                  "pm.test('0 reservadas', function () { pm.expect(item.reserved).to.eql(0); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{order_api}}/inventory" }
+        },
+        {
+          "name": "4.5 Reconciliar no libera dos veces",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('sigue REJECTED', function () { pm.expect(pm.response.json().status).to.eql('REJECTED'); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{order_api}}/orders/{{order_id}}/reconcile" }
+        },
+        {
+          "name": "4.6 El stock sigue igual",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const item = pm.response.json().items[0];",
+                  "pm.test('5 disponibles', function () { pm.expect(item.available).to.eql(5); });",
+                  "pm.test('0 reservadas', function () { pm.expect(item.reserved).to.eql(0); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{order_api}}/inventory" }
+        }
+      ]
+    },
+    {
+      "name": "5. Otra intencion de compra",
+      "description": "Con una sola unidad, una clave distinta es otra compra: la segunda falla y el stock nunca queda negativo.",
+      "item": [
+        {
+          "name": "5.0 Reset Order API",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{order_api}}/admin/reset" }
+        },
+        {
+          "name": "5.1 Reset Payment Mock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('reset ok', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{payment_api}}/admin/reset" }
+        },
+        {
+          "name": "5.2 Sembrar inventario (1 unidad)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('sembrado', function () { pm.response.to.have.status(200); });",
+                  "pm.test('1 disponible', function () { pm.expect(pm.response.json().available).to.eql(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Mechanical keyboard\",\n  \"available\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/admin/inventory"
+          }
+        },
+        {
+          "name": "5.3 Pedido A (se lleva la ultima unidad)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('PAID', function () { pm.expect(pm.response.json().status).to.eql('PAID'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "case5-key-a" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"cust-a\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 1,\n  \"unit_price_cents\": 9900\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/orders"
+          }
+        },
+        {
+          "name": "5.4 Pedido B (otra clave, otra intencion)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 sin stock', function () { pm.response.to.have.status(409); });",
+                  "pm.test('codigo insufficient_stock', function () { pm.expect(pm.response.json().error.code).to.eql('insufficient_stock'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "case5-key-b" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"cust-b\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 1,\n  \"unit_price_cents\": 9900\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{order_api}}/orders"
+          }
+        },
+        {
+          "name": "5.5 El stock llego a cero, nunca a negativo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const item = pm.response.json().items[0];",
+                  "pm.test('0 disponibles', function () { pm.expect(item.available).to.eql(0); });",
+                  "pm.test('0 reservadas', function () { pm.expect(item.reserved).to.eql(0); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{order_api}}/inventory" }
+        }
+      ]
+    }
+  ]
+}
